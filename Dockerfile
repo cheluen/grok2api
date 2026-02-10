@@ -28,10 +28,10 @@ COPY main.py ./
 COPY scripts ./scripts
 
 RUN mkdir -p /app/data /app/data/tmp /app/logs \
-    && chmod +x /app/scripts/entrypoint.sh
+    && chmod +x /app/scripts/entrypoint.sh /app/scripts/start.sh
 
-EXPOSE 8000
+EXPOSE 8000 7860
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/scripts/start.sh"]

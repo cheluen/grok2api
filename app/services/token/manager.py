@@ -2,6 +2,8 @@
 
 import asyncio
 import time
+import os
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -28,6 +30,57 @@ DEFAULT_SAVE_DELAY_MS = 500
 
 SUPER_POOL_NAME = "ssoSuper"
 BASIC_POOL_NAME = "ssoBasic"
+
+ENV_BASIC_TOKENS = "GROK2API_SSO_BASIC_TOKENS"
+ENV_SUPER_TOKENS = "GROK2API_SSO_SUPER_TOKENS"
+
+
+def _parse_tokens_env(raw: str) -> list[str]:
+    raw_str = (raw or "").strip()
+    if not raw_str:
+        return []
+    if raw_str.startswith("["):
+        try:
+            val = json.loads(raw_str)
+            if isinstance(val, list):
+                tokens: list[str] = []
+                for item in val:
+                    tok = str(item).strip()
+                    if tok:
+                        tokens.append(tok)
+                return tokens
+        except Exception:
+            pass
+    # 兼容简单的逗号/换行分隔
+    tokens: list[str] = []
+    for part in raw_str.replace("\n", ",").split(","):
+        tok = part.strip()
+        if tok:
+            tokens.append(tok)
+    return tokens
+
+
+def _load_tokens_from_env() -> dict[str, list[dict]]:
+    data: dict[str, list[dict]] = {}
+
+    basic_raw = os.getenv(ENV_BASIC_TOKENS, "")
+    super_raw = os.getenv(ENV_SUPER_TOKENS, "")
+
+    basic_tokens = _parse_tokens_env(basic_raw)
+    super_tokens = _parse_tokens_env(super_raw)
+
+    for pool_name, tokens in (
+        (BASIC_POOL_NAME, basic_tokens),
+        (SUPER_POOL_NAME, super_tokens),
+    ):
+        for token in tokens:
+            tok = token[4:] if token.startswith("sso=") else token
+            tok = tok.strip()
+            if not tok:
+                continue
+            data.setdefault(pool_name, []).append({"token": tok})
+
+    return data
 
 
 def _default_quota_for_pool(pool_name: str) -> int:
@@ -82,6 +135,23 @@ class TokenManager:
                         )
                     else:
                         data = {}
+
+                # 如果仍然为空，尝试从环境变量注入（适配 Spaces/Serverless 无文件配置场景）
+                if not data:
+                    env_data = _load_tokens_from_env()
+                    if env_data:
+                        data = env_data
+                        try:
+                            async with storage.acquire_lock("tokens_save", timeout=10):
+                                await storage.save_tokens(env_data)
+                            total_env = sum(len(v) for v in env_data.values())
+                            logger.info(
+                                f"Initialized token storage from env: {len(env_data)} pools, {total_env} tokens"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to persist env tokens into storage: {e}"
+                            )
 
                 self.pools = {}
                 for pool_name, tokens in data.items():
