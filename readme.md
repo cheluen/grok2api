@@ -244,6 +244,21 @@ curl http://localhost:8000/v1/images/edits \
 
 配置文件：`data/config.toml`
 
+### 环境变量覆盖（推荐）
+
+为避免在仓库/镜像中写入敏感信息，支持使用环境变量覆盖 `config.toml` 中的配置项（环境变量优先生效）。
+
+- 通用规则：`GROK2API_<SECTION>__<KEY>`（全大写，使用 `__` 分隔）
+  - 例如：`app.app_url` -> `GROK2API_APP__APP_URL`
+  - 例如：`chat.temporary` -> `GROK2API_CHAT__TEMPORARY`（`true/false`）
+- 常用敏感项（更短的别名变量名）：
+  - `app.app_key` -> `GROK2API_APP_KEY`
+  - `app.api_key` -> `GROK2API_API_KEY`
+  - `security.cf_clearance` -> `GROK2API_CF_CLEARANCE`（可直接填 `cf_clearance=xxx` 或整段 cookie，程序会自动提取）
+- Token 池初始化（可选，适合 Hugging Face Spaces 等无文件配置场景）：
+  - `GROK2API_SSO_BASIC_TOKENS`：Basic token 列表（逗号/换行分隔，或 JSON 数组）
+  - `GROK2API_SSO_SUPER_TOKENS`：Super token 列表（逗号/换行分隔，或 JSON 数组）
+
 > [!NOTE]
 > 生产环境或反向代理部署时，请确保 `app.app_url` 配置为对外可访问的完整 URL，
 > 否则可能出现文件访问链接不正确或 403 等问题。
