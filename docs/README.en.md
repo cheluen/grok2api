@@ -218,6 +218,17 @@ Note: `size`, `quality`, `style` are OpenAI compatibility placeholders and are n
 
 Config file: `data/config.toml`
 
+### Environment Variables (Sensitive Settings)
+
+To avoid committing secrets into the repo/image, these sensitive settings can be provided via environment variables (env takes precedence). Other non-sensitive options should remain in `data/config.toml`.
+
+- Admin password: `GROK2API_APP_KEY` (maps to `app.app_key`)
+- API key: `GROK2API_API_KEY` (maps to `app.api_key`, empty disables API auth)
+- CF clearance: `GROK2API_CF_CLEARANCE` (maps to `security.cf_clearance`, you can paste `cf_clearance=xxx` or the whole cookie string)
+- Token pool init (optional, useful for Hugging Face Spaces):
+  - `GROK2API_SSO_BASIC_TOKENS` (comma/newline separated, or JSON array)
+  - `GROK2API_SSO_SUPER_TOKENS` (comma/newline separated, or JSON array)
+
 > [!NOTE]
 > In production or behind a reverse proxy, make sure `app.app_url` is set to the public URL.
 > Otherwise file links may be incorrect or return 403.
