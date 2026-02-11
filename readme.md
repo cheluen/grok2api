@@ -51,6 +51,43 @@ docker compose up -d
 >
 > 持久化请使用 MySQL / Redis / PostgreSQL，在 Render 环境变量中设置：SERVER_STORAGE_TYPE（mysql/redis/pgsql）与 SERVER_STORAGE_URL。
 
+#### Hugging Face Spaces（Dashboard + GHCR 镜像）
+
+1. 先开启 GitHub Actions 自动构建
+
+   - 仓库 `Settings -> Actions -> General` 中选择允许执行 Actions（fork 仓库默认可能是关闭的）
+   - `Workflow permissions` 选择 `Read and write permissions`（用于推送 ghcr 镜像）
+   - push 一次 `main`，或在 `Actions` 页面手动执行 `Build Docker Image`（已支持 `workflow_dispatch`）
+
+2. 确认镜像可公开拉取
+
+   - 默认镜像地址：`ghcr.io/<你的 GitHub 用户名>/<仓库名>:latest`
+   - 首次推送后到 GitHub `Packages` 将该镜像包可见性改为 `Public`
+
+3. 在 HF Dashboard 创建 Space
+
+   - `New Space` -> `SDK` 选择 `Docker`
+   - 建议在 `Settings` 启用 `Persistent Storage`，并设置 `DATA_DIR=/data`
+   - 在 `Settings -> Variables and secrets` 配置环境变量（敏感值放 `Secrets`）
+
+4. 在 Space 仓库放一个最小 Dockerfile（只需拉取你的 GHCR 镜像）
+
+```Dockerfile
+FROM ghcr.io/<你的 GitHub 用户名>/<仓库名>:latest
+ENV DATA_DIR=/data
+EXPOSE 7860
+```
+
+5. HF Spaces 推荐环境变量
+
+   - 必填：`GROK2API_APP_KEY`、`GROK2API_API_KEY`
+   - 按需：`GROK2API_CF_CLEARANCE`
+   - 至少一组 Token：`GROK2API_SSO_BASIC_TOKENS` 或 `GROK2API_SSO_SUPER_TOKENS`
+   - 可选：`SERVER_STORAGE_TYPE`、`SERVER_STORAGE_URL`（远端存储时）
+
+> [!TIP]
+> 如果 `https://api.github.com/repos/<owner>/<repo>/actions/runs` 一直返回空列表，通常是仓库 Actions 尚未启用，按上面第 1 步开启即可。
+
 ### 管理面板
 
 访问地址：`http://<host>:8000/admin`

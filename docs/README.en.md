@@ -55,6 +55,43 @@ docker compose up -d
 >
 > For persistence, use MySQL / Redis / PostgreSQL. On Render set: SERVER_STORAGE_TYPE (mysql/redis/pgsql) and SERVER_STORAGE_URL.
 
+#### Hugging Face Spaces (Dashboard + GHCR image)
+
+1. Enable GitHub Actions first
+
+   - In `Settings -> Actions -> General`, allow Actions (forks may have Actions disabled by default)
+   - Set `Workflow permissions` to `Read and write permissions` (required for pushing to GHCR)
+   - Push to `main`, or manually run `Build Docker Image` from the Actions tab (`workflow_dispatch` is enabled)
+
+2. Ensure the image is publicly pullable
+
+   - Default image: `ghcr.io/<your-github-username>/<repo>:latest`
+   - After first push, open GitHub `Packages` and set package visibility to `Public`
+
+3. Create a Docker Space from dashboard
+
+   - `New Space` -> choose `Docker` as SDK
+   - Recommended: enable `Persistent Storage` and set `DATA_DIR=/data`
+   - Add env vars in `Settings -> Variables and secrets` (put sensitive values in `Secrets`)
+
+4. Keep a minimal Dockerfile in the Space repo
+
+```Dockerfile
+FROM ghcr.io/<your-github-username>/<repo>:latest
+ENV DATA_DIR=/data
+EXPOSE 7860
+```
+
+5. Recommended env vars for HF Spaces
+
+   - Required: `GROK2API_APP_KEY`, `GROK2API_API_KEY`
+   - Optional: `GROK2API_CF_CLEARANCE`
+   - At least one token source: `GROK2API_SSO_BASIC_TOKENS` or `GROK2API_SSO_SUPER_TOKENS`
+   - Optional: `SERVER_STORAGE_TYPE`, `SERVER_STORAGE_URL` (if using remote storage)
+
+> [!TIP]
+> If `https://api.github.com/repos/<owner>/<repo>/actions/runs` keeps returning an empty list, Actions are likely not enabled for the repo yet.
+
 ### Admin panel
 
 URL: `http://<host>:8000/admin`  
