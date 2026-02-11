@@ -246,15 +246,11 @@ curl http://localhost:8000/v1/images/edits \
 
 ### 环境变量覆盖（推荐）
 
-为避免在仓库/镜像中写入敏感信息，支持使用环境变量覆盖 `config.toml` 中的配置项（环境变量优先生效）。
+为避免在仓库/镜像中写入敏感信息，敏感项支持用环境变量设置（环境变量优先生效），其余非敏感项继续使用 `data/config.toml`。
 
-- 通用规则：`GROK2API_<SECTION>__<KEY>`（全大写，使用 `__` 分隔）
-  - 例如：`app.app_url` -> `GROK2API_APP__APP_URL`
-  - 例如：`chat.temporary` -> `GROK2API_CHAT__TEMPORARY`（`true/false`）
-- 常用敏感项（更短的别名变量名）：
-  - `app.app_key` -> `GROK2API_APP_KEY`
-  - `app.api_key` -> `GROK2API_API_KEY`
-  - `security.cf_clearance` -> `GROK2API_CF_CLEARANCE`（可直接填 `cf_clearance=xxx` 或整段 cookie，程序会自动提取）
+- 后台密码：`GROK2API_APP_KEY`（对应 `app.app_key`）
+- API 密钥：`GROK2API_API_KEY`（对应 `app.api_key`，留空表示不启用接口鉴权）
+- CF Clearance：`GROK2API_CF_CLEARANCE`（对应 `security.cf_clearance`，可直接填 `cf_clearance=xxx` 或整段 cookie，程序会自动提取）
 - Token 池初始化（可选，适合 Hugging Face Spaces 等无文件配置场景）：
   - `GROK2API_SSO_BASIC_TOKENS`：Basic token 列表（逗号/换行分隔，或 JSON 数组）
   - `GROK2API_SSO_SUPER_TOKENS`：Super token 列表（逗号/换行分隔，或 JSON 数组）
