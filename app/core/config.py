@@ -9,7 +9,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
 import os
-import json
 import tomllib
 
 from app.core.logger import logger
@@ -26,17 +25,6 @@ _SENSITIVE_ENV_OVERRIDES: dict[str, str] = {
 }
 
 
-_ENV_TRUE = {"1", "true", "yes", "on", "y"}
-_ENV_FALSE = {"0", "false", "no", "off", "n"}
-
-
-def _key_to_env_var(key: str) -> str:
-    parts = [p.strip() for p in key.split(".") if p.strip()]
-    if not parts:
-        return "GROK2API_"
-    return "GROK2API_" + "__".join(p.upper() for p in parts)
-
-
 def _normalize_cf_clearance(raw: str) -> str:
     stripped = raw.strip()
     marker = "cf_clearance="
@@ -48,86 +36,19 @@ def _normalize_cf_clearance(raw: str) -> str:
     return candidate.split(";", 1)[0].strip()
 
 
-def _parse_env_value(raw: str, hint: Any) -> Any:
-    raw_str = raw.strip()
+def _get_env_override(key: str) -> tuple[bool, Any]:
+    env_key = _SENSITIVE_ENV_OVERRIDES.get(key)
+    if not env_key:
+        return False, None
 
-    if isinstance(hint, bool):
-        lowered = raw_str.lower()
-        if lowered in _ENV_TRUE:
-            return True
-        if lowered in _ENV_FALSE:
-            return False
-        raise ValueError(f"invalid bool: {raw!r}")
+    # 只要环境变量存在，就覆盖（允许用空字符串显式禁用）
+    if env_key not in os.environ:
+        return False, None
 
-    if isinstance(hint, int) and not isinstance(hint, bool):
-        if not raw_str:
-            raise ValueError("empty int")
-        return int(raw_str)
-
-    if isinstance(hint, float):
-        if not raw_str:
-            raise ValueError("empty float")
-        return float(raw_str)
-
-    if isinstance(hint, dict):
-        if not raw_str:
-            raise ValueError("empty dict")
-        val = json.loads(raw_str)
-        if not isinstance(val, dict):
-            raise ValueError("not a dict json")
-        return val
-
-    if isinstance(hint, list):
-        if not raw_str:
-            return []
-        if raw_str.startswith("[") or raw_str.startswith("{"):
-            val = json.loads(raw_str)
-            if not isinstance(val, list):
-                raise ValueError("not a list json")
-            return val
-        # 兼容简单的逗号/换行分隔
-        items = []
-        for part in raw_str.replace("\n", ",").split(","):
-            item = part.strip()
-            if item:
-                items.append(item)
-        return items
-
-    # 默认按字符串处理（允许空字符串显式覆盖）
-    return raw
-
-
-def _get_env_override(key: str, hint: Any = None) -> tuple[bool, Any]:
-    # 兼容历史/显式变量名（更短更直观）
-    candidates: list[str] = []
-    mapped = _SENSITIVE_ENV_OVERRIDES.get(key)
-    if mapped:
-        candidates.append(mapped)
-
-    # 通用映射：GROK2API_<SECTION>__<KEY>
-    candidates.append(_key_to_env_var(key))
-
-    for env_key in candidates:
-        # 只要环境变量存在就覆盖（允许空字符串显式禁用/清空）
-        if env_key not in os.environ:
-            continue
-
-        raw = os.environ.get(env_key, "")
-        if key == "security.cf_clearance" and isinstance(raw, str):
-            raw = _normalize_cf_clearance(raw)
-
-        if hint is None:
-            return True, raw
-
-        try:
-            return True, _parse_env_value(raw, hint)
-        except Exception as exc:
-            logger.warning(
-                f"Invalid env override {env_key} for {key}: {exc}; fallback to config"
-            )
-            return False, None
-
-    return False, None
+    value = os.environ.get(env_key, "")
+    if key == "security.cf_clearance" and isinstance(value, str):
+        value = _normalize_cf_clearance(value)
+    return True, value
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -319,24 +240,7 @@ class Config:
             key: 配置键，格式 "section.key"
             default: 默认值
         """
-        missing = object()
-        hint = default
-        current = missing
-        if "." in key:
-            try:
-                section, attr = key.split(".", 1)
-                section_val = self._config.get(section)
-                if isinstance(section_val, dict) and attr in section_val:
-                    current = section_val.get(attr, missing)
-            except (ValueError, AttributeError):
-                current = missing
-        else:
-            if key in self._config:
-                current = self._config.get(key, missing)
-        if current is not missing:
-            hint = current
-
-        hit, env_val = _get_env_override(key, hint)
+        hit, env_val = _get_env_override(key)
         if hit:
             return env_val
 

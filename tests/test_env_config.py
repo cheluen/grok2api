@@ -16,10 +16,6 @@ class TestEnvConfigOverrides(unittest.IsolatedAsyncioTestCase):
                 "GROK2API_APP_KEY",
                 "GROK2API_API_KEY",
                 "GROK2API_CF_CLEARANCE",
-                "GROK2API_APP__APP_KEY",
-                "GROK2API_CHAT__TEMPORARY",
-                "GROK2API_NETWORK__TIMEOUT",
-                "GROK2API_CHAT__FILTER_TAGS",
             )
         }
         for key in self._saved_env:
@@ -29,8 +25,6 @@ class TestEnvConfigOverrides(unittest.IsolatedAsyncioTestCase):
         config._config = {
             "app": {"app_key": "from_file_app", "api_key": ""},
             "security": {"cf_clearance": "from_file_cf"},
-            "chat": {"temporary": True, "filter_tags": ["x", "y"]},
-            "network": {"timeout": 120},
         }
 
     def tearDown(self) -> None:
@@ -44,26 +38,10 @@ class TestEnvConfigOverrides(unittest.IsolatedAsyncioTestCase):
         os.environ["GROK2API_APP_KEY"] = "env_app_key"
         self.assertEqual(get_config("app.app_key"), "env_app_key")
 
-    def test_generic_env_var_overrides_string(self) -> None:
-        os.environ["GROK2API_APP__APP_KEY"] = "env_nested_app_key"
-        self.assertEqual(get_config("app.app_key"), "env_nested_app_key")
-
     def test_env_empty_string_can_disable_api_key(self) -> None:
         config._config["app"]["api_key"] = "from_file_api_key"
         os.environ["GROK2API_API_KEY"] = ""
         self.assertEqual(get_admin_api_key(), "")
-
-    def test_generic_env_var_parses_bool(self) -> None:
-        os.environ["GROK2API_CHAT__TEMPORARY"] = "false"
-        self.assertEqual(get_config("chat.temporary"), False)
-
-    def test_generic_env_var_parses_int(self) -> None:
-        os.environ["GROK2API_NETWORK__TIMEOUT"] = "150"
-        self.assertEqual(get_config("network.timeout"), 150)
-
-    def test_generic_env_var_parses_list(self) -> None:
-        os.environ["GROK2API_CHAT__FILTER_TAGS"] = "a,b\nc"
-        self.assertEqual(get_config("chat.filter_tags"), ["a", "b", "c"])
 
     def test_env_overrides_cf_clearance_and_normalizes(self) -> None:
         os.environ["GROK2API_CF_CLEARANCE"] = "foo=1; cf_clearance=abc123; bar=2"
