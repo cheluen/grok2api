@@ -38,6 +38,9 @@ CONFIG_FILE = DATA_DIR / "config.toml"
 TOKEN_FILE = DATA_DIR / "token.json"
 LOCK_DIR = DATA_DIR / ".locks"
 
+_PG_INT64_MIN = -(1 << 63)
+_PG_INT64_MAX = (1 << 63) - 1
+
 
 # JSON 序列化优化助手函数
 def json_dumps(obj: Any) -> str:
@@ -46,6 +49,22 @@ def json_dumps(obj: Any) -> str:
 
 def json_loads(obj: str | bytes) -> Any:
     return orjson.loads(obj)
+
+
+def _pg_advisory_lock_key(name: str) -> int:
+    """
+    生成 PostgreSQL advisory lock key（有符号 int64）。
+
+    PostgreSQL 的 pg_try_advisory_lock(bigint) 参数类型为 signed int64，
+    这里使用固定哈希并按 signed 解释，确保跨进程稳定且不会越界。
+    """
+    key = int.from_bytes(
+        hashlib.sha256(name.encode("utf-8")).digest()[:8], "big", signed=True
+    )
+    # 防御式校验，避免未来修改引入越界值
+    if key < _PG_INT64_MIN or key > _PG_INT64_MAX:
+        raise StorageError(f"PostgreSQL advisory lock key out of range: {key}")
+    return key
 
 
 class StorageError(Exception):
@@ -608,9 +627,7 @@ class SQLStorage(BaseStorage):
                     except Exception:
                         pass
         elif self.dialect in ("postgres", "postgresql", "pgsql"):
-            lock_key = int.from_bytes(
-                hashlib.sha256(name.encode("utf-8")).digest()[:8], "big", signed=False
-            )
+            lock_key = _pg_advisory_lock_key(name)
             async with self.async_session() as session:
                 start = time.monotonic()
                 while True:
