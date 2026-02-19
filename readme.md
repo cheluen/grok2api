@@ -38,8 +38,8 @@ docker compose up -d
 
 ```bash
 docker run -d --name grok2api -p 8000:8000 \
-  -e SERVER_STORAGE_TYPE=redis \
-  -e SERVER_STORAGE_URL=redis://:password@redis:6379/0 \
+  -e SERVER_STORAGE_TYPE=pgsql \
+  -e SERVER_STORAGE_URL=postgresql+asyncpg://user:password@postgres:5432/grok2api \
   -e GROK2API_CONFIG__APP__APP_KEY=your-admin-password \
   -e GROK2API_CONFIG__APP__API_KEY=your-api-key \
   -e GROK2API_CONFIG__APP__APP_URL=https://your-domain.example \
