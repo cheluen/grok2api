@@ -42,6 +42,18 @@ browser = "chrome136"
 user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 
 
+# ==================== CF Clearance 自动获取服务 ====================
+[cf_clearance]
+# CF Clearance 服务地址（如 http://localhost:20001）
+service_url = ""
+# CF Clearance 服务 API Key
+api_key = ""
+# 目标站点 URL
+target_url = "https://grok.com"
+# 请求超时时间（秒）
+timeout = 120
+
+
 # ==================== 重试策略 ====================
 [retry]
 # 最大重试次数

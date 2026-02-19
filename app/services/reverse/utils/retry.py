@@ -12,6 +12,16 @@ from app.core.config import get_config
 from app.core.exceptions import UpstreamException
 
 
+async def _maybe_refresh_cf_clearance(status_code: int) -> None:
+    """在403错误时刷新 CF Clearance"""
+    if status_code == 403:
+        try:
+            from app.services.cf_clearance import handle_403_refresh
+            await handle_403_refresh()
+        except Exception as e:
+            logger.debug(f"Failed to refresh CF Clearance on 403: {e}")
+
+
 class RetryContext:
     """Retry context."""
 
@@ -204,7 +214,8 @@ async def retry_on_status(
                     + (f", Retry-After: {retry_after}s" if retry_after else "")
                 )
 
-                # Callback
+                await _maybe_refresh_cf_clearance(status_code)
+
                 if on_retry:
                     result = on_retry(ctx.attempt, status_code, e, delay)
                     if inspect.isawaitable(result):
@@ -230,4 +241,5 @@ __all__ = [
     "RetryContext",
     "retry_on_status",
     "extract_retry_after",
+    "_maybe_refresh_cf_clearance",
 ]
