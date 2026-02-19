@@ -1,5 +1,7 @@
 let apiKey = '';
 let currentConfig = {};
+let envLockedMap = {};
+let envLockHint = '';
 const byId = (id) => document.getElementById(id);
 const NUMERIC_FIELDS = new Set([
   'timeout',
@@ -187,6 +189,37 @@ function sortByOrder(keys, orderMap) {
   });
 }
 
+function getConfigPath(section, key) {
+  return `${section}.${key}`;
+}
+
+function getEnvLockInfo(section, key) {
+  return envLockedMap[getConfigPath(section, key)] || null;
+}
+
+function markEnvLockedControls(built) {
+  if (!built) return;
+  const controls = Array.isArray(built.controls) ? built.controls : [];
+  controls.forEach((control) => {
+    if (!control) return;
+    control.disabled = true;
+  });
+  if (built.input) {
+    built.input.dataset.envLocked = 'true';
+  }
+}
+
+function removeLockedFromPayload(config) {
+  Object.keys(envLockedMap).forEach((path) => {
+    const [section, key] = path.split('.');
+    if (!section || !key || !config[section]) return;
+    delete config[section][key];
+    if (Object.keys(config[section]).length === 0) {
+      delete config[section];
+    }
+  });
+}
+
 function setInputMeta(input, section, key) {
   input.dataset.section = section;
   input.dataset.key = key;
@@ -216,7 +249,7 @@ function buildBooleanInput(section, key, val) {
   label.appendChild(input);
   label.appendChild(slider);
 
-  return { input, node: label };
+  return { input, node: label, controls: [input] };
 }
 
 function buildSelectInput(section, key, val, options) {
@@ -226,7 +259,7 @@ function buildSelectInput(section, key, val, options) {
   options.forEach(opt => {
     input.appendChild(createOption(opt.val, opt.text, val));
   });
-  return { input, node: input };
+  return { input, node: input, controls: [input] };
 }
 
 function buildJsonInput(section, key, val) {
@@ -236,7 +269,7 @@ function buildJsonInput(section, key, val) {
   input.value = JSON.stringify(val, null, 2);
   setInputMeta(input, section, key);
   input.dataset.type = 'json';
-  return { input, node: input };
+  return { input, node: input, controls: [input] };
 }
 
 function buildTextInput(section, key, val) {
@@ -245,7 +278,7 @@ function buildTextInput(section, key, val) {
   input.className = 'geist-input';
   input.value = val;
   setInputMeta(input, section, key);
-  return { input, node: input };
+  return { input, node: input, controls: [input] };
 }
 
 function buildSecretInput(section, key, val) {
@@ -277,7 +310,7 @@ function buildSecretInput(section, key, val) {
   wrapper.appendChild(genBtn);
   wrapper.appendChild(copyBtn);
 
-  return { input, node: wrapper };
+  return { input, node: wrapper, controls: [input, genBtn] };
 }
 
 function randomKey(len) {
@@ -309,7 +342,17 @@ async function loadData() {
       headers: buildAuthHeaders(apiKey)
     });
     if (res.ok) {
-      currentConfig = await res.json();
+      const payload = await res.json();
+      if (payload && payload.config && typeof payload.config === 'object') {
+        currentConfig = payload.config;
+        const meta = payload.meta && typeof payload.meta === 'object' ? payload.meta : {};
+        envLockedMap = meta.env_locked && typeof meta.env_locked === 'object' ? meta.env_locked : {};
+        envLockHint = typeof meta.lock_hint === 'string' ? meta.lock_hint : '';
+      } else {
+        currentConfig = payload || {};
+        envLockedMap = {};
+        envLockHint = '';
+      }
       renderConfig(currentConfig);
     } else if (res.status === 401) {
       logout();
@@ -325,6 +368,16 @@ function renderConfig(data) {
   container.replaceChildren();
 
   const fragment = document.createDocumentFragment();
+  const lockedCount = Object.keys(envLockedMap).length;
+  if (lockedCount > 0) {
+    const notice = document.createElement('div');
+    notice.className = 'config-lock-summary';
+    notice.textContent = envLockHint
+      ? `检测到 ${lockedCount} 项配置由环境变量接管。${envLockHint}`
+      : `检测到 ${lockedCount} 项配置由环境变量接管，已在面板中锁定。`;
+    fragment.appendChild(notice);
+  }
+
   const sections = sortByOrder(Object.keys(data), SECTION_ORDER);
 
   sections.forEach(section => {
@@ -371,15 +424,31 @@ function renderConfig(data) {
 
 function buildFieldCard(section, key, val) {
   const text = getText(section, key);
+  const lockInfo = getEnvLockInfo(section, key);
 
   const fieldCard = document.createElement('div');
   fieldCard.className = 'config-field';
+  if (lockInfo) {
+    fieldCard.classList.add('is-locked');
+  }
 
   // Title
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'config-field-title-row';
+
   const titleEl = document.createElement('div');
   titleEl.className = 'config-field-title';
   titleEl.textContent = text.title;
-  fieldCard.appendChild(titleEl);
+  titleWrap.appendChild(titleEl);
+
+  if (lockInfo) {
+    const lockBadge = document.createElement('span');
+    lockBadge.className = 'config-lock-badge';
+    lockBadge.textContent = '环境变量锁定';
+    titleWrap.appendChild(lockBadge);
+  }
+
+  fieldCard.appendChild(titleWrap);
 
   // Description (Muted) - 只在有描述时显示
   if (text.desc) {
@@ -387,6 +456,13 @@ function buildFieldCard(section, key, val) {
     descEl.className = 'config-field-desc';
     descEl.textContent = text.desc;
     fieldCard.appendChild(descEl);
+  }
+
+  if (lockInfo && lockInfo.env_var) {
+    const lockDesc = document.createElement('p');
+    lockDesc.className = 'config-field-lock-desc';
+    lockDesc.textContent = `由环境变量 ${lockInfo.env_var} 接管；如需修改请先删除该环境变量并重启服务。`;
+    fieldCard.appendChild(lockDesc);
   }
 
   // Input Wrapper
@@ -426,6 +502,10 @@ function buildFieldCard(section, key, val) {
   }
   fieldCard.appendChild(inputWrapper);
 
+  if (lockInfo) {
+    markEnvLockedControls(built);
+  }
+
   if (section === 'app' && key === 'public_enabled') {
     fieldCard.classList.add('has-action');
     const link = document.createElement('a');
@@ -435,8 +515,12 @@ function buildFieldCard(section, key, val) {
     link.setAttribute('aria-label', '功能玩法');
     link.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>`;
     link.style.display = val ? 'inline-flex' : 'none';
+    if (lockInfo) {
+      link.style.opacity = '0.6';
+      link.style.pointerEvents = 'none';
+    }
     fieldCard.appendChild(link);
-    if (built && built.input) {
+    if (!lockInfo && built && built.input) {
       built.input.addEventListener('change', () => {
         link.style.display = built.input.checked ? 'inline-flex' : 'none';
       });
@@ -459,6 +543,9 @@ async function saveConfig() {
     const inputs = document.querySelectorAll('input[data-section], textarea[data-section], select[data-section]');
 
     inputs.forEach(input => {
+      if (input.dataset.envLocked === 'true') {
+        return;
+      }
       const s = input.dataset.section;
       const k = input.dataset.key;
       let val = input.value;
@@ -478,6 +565,7 @@ async function saveConfig() {
       if (!newConfig[s]) newConfig[s] = {};
       newConfig[s][k] = val;
     });
+    removeLockedFromPayload(newConfig);
 
     const res = await fetch('/v1/admin/config', {
       method: 'POST',
@@ -487,10 +575,14 @@ async function saveConfig() {
       },
       body: JSON.stringify(newConfig)
     });
+    const result = await res.json().catch(() => ({}));
 
     if (res.ok) {
       btn.innerText = '成功';
       showToast('配置已保存', 'success');
+      if (Array.isArray(result.ignored_locked_paths) && result.ignored_locked_paths.length > 0) {
+        showToast(`有 ${result.ignored_locked_paths.length} 项环境变量锁定配置已被忽略`, 'warning');
+      }
       setTimeout(() => {
         btn.innerText = originalText;
         btn.style.backgroundColor = '';

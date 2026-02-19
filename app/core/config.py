@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict
 import tomllib
 
+from app.core.config_env import EnvConfigOverlay, filter_locked_config
 from app.core.logger import logger
 
 DEFAULT_CONFIG_FILE = Path(__file__).parent.parent.parent / "config.defaults.toml"
@@ -196,8 +197,11 @@ class Config:
 
     def __init__(self):
         self._config = {}
+        self._persisted_config = {}
         self._defaults = {}
         self._code_defaults = {}
+        self._env_locked_paths: Dict[str, str] = {}
+        self._env_overlay = EnvConfigOverlay()
         self._defaults_loaded = False
 
     def register_defaults(self, defaults: Dict[str, Any]):
@@ -211,6 +215,32 @@ class Config:
         # 合并文件默认值和代码默认值（代码默认值优先级更低）
         self._defaults = _deep_merge(self._code_defaults, file_defaults)
         self._defaults_loaded = True
+
+    def _refresh_runtime_config(self, persisted_config: Dict[str, Any]):
+        """基于持久化配置刷新运行时配置（含环境变量覆盖层）。"""
+        overlay_result = self._env_overlay.build(self._defaults, persisted_config)
+        if overlay_result.errors:
+            for path, message in overlay_result.errors.items():
+                logger.warning(f"Skip env override for {path}: {message}")
+
+        self._persisted_config = _deep_merge({}, persisted_config)
+        self._env_locked_paths = dict(overlay_result.locked_paths)
+        self._config = _deep_merge(self._persisted_config, overlay_result.overrides)
+
+    def get_admin_view(self) -> Dict[str, Any]:
+        """返回管理面板使用的配置与锁定元信息。"""
+        return {
+            "config": _deep_merge({}, self._config),
+            "meta": {
+                "env_locked": {
+                    path: {"env_var": env_var}
+                    for path, env_var in sorted(self._env_locked_paths.items())
+                },
+                "lock_hint": (
+                    "该配置项由环境变量托管。若需修改，请先删除对应环境变量并重启服务。"
+                ),
+            },
+        }
 
     async def load(self):
         """显式加载配置"""
@@ -263,10 +293,12 @@ class Config:
                 if deprecated_sections:
                     logger.info("Configuration automatically migrated and cleaned.")
 
-            self._config = merged
+            self._refresh_runtime_config(merged)
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             self._config = {}
+            self._persisted_config = {}
+            self._env_locked_paths = {}
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -292,10 +324,14 @@ class Config:
         storage = get_storage()
         async with storage.acquire_lock("config_save", timeout=10):
             self._ensure_defaults()
-            base = _deep_merge(self._defaults, self._config or {})
-            merged = _deep_merge(base, new_config or {})
+            base = _deep_merge(self._defaults, self._persisted_config or {})
+            filtered_config, ignored_locked_paths = filter_locked_config(
+                new_config or {}, self._env_locked_paths
+            )
+            merged = _deep_merge(base, filtered_config)
             await storage.save_config(merged)
-            self._config = merged
+            self._refresh_runtime_config(merged)
+            return {"ignored_locked_paths": ignored_locked_paths}
 
 
 # 全局配置实例

@@ -18,16 +18,25 @@ async def admin_verify():
 @router.get("/config", dependencies=[Depends(verify_app_key)])
 async def get_config():
     """获取当前配置"""
-    # 暴露原始配置字典
-    return config._config
+    return config.get_admin_view()
 
 
 @router.post("/config", dependencies=[Depends(verify_app_key)])
 async def update_config(data: dict):
     """更新配置"""
     try:
-        await config.update(data)
-        return {"status": "success", "message": "配置已更新"}
+        payload = data.get("config") if isinstance(data.get("config"), dict) else data
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Invalid config payload")
+
+        result = await config.update(payload)
+        return {
+            "status": "success",
+            "message": "配置已更新",
+            **(result or {}),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

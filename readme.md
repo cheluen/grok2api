@@ -80,6 +80,7 @@ docker compose up -d
 | `SERVER_WORKERS` | Uvicorn worker 数量 | `1` | `2` |
 | `SERVER_STORAGE_TYPE` | 存储类型（`local`/`redis`/`mysql`/`pgsql`） | `local` | `pgsql` |
 | `SERVER_STORAGE_URL` | 存储连接串（local 时可为空） | `""` | `postgresql+asyncpg://user:password@host:5432/db` |
+| `GROK2API_CONFIG__<SECTION>__<KEY>` | 覆盖 `data/config.toml` 中任意配置项（优先级最高） | 未设置时不覆盖 | `GROK2API_CONFIG__APP__APP_KEY=your-password` |
 
 > MySQL 示例：`mysql+aiomysql://user:password@host:3306/db`（若填 `mysql://` 会自动转为 `mysql+aiomysql://`）
 
@@ -275,6 +276,22 @@ curl http://localhost:8000/v1/images/edits \
 > [!TIP]
 > **v2.0 配置结构升级**：旧版本用户更新后，配置会**自动迁移**到新结构，无需手动修改。
 > 旧的 `[grok]` 配置节中的自定义值会自动映射到对应的新配置节。
+
+### 环境变量覆盖（云托管 Docker 推荐）
+
+- 覆盖规则：`section.key` → `GROK2API_CONFIG__SECTION__KEY`（全大写，`.` 用 `__` 分隔）
+- 优先级：`环境变量 > data/config.toml > config.defaults.toml`
+- 类型规则：按 `config.defaults.toml` 的字段类型解析（布尔/数字/字符串/JSON 数组或对象）
+- 管理面板中，来自环境变量的配置项会自动锁定，并提示“若需修改需先移除环境变量并重启服务”
+
+示例：
+
+```bash
+GROK2API_CONFIG__APP__APP_KEY=your-admin-password
+GROK2API_CONFIG__APP__API_KEY=your-api-token
+GROK2API_CONFIG__PROXY__CF_CLEARANCE=your-cookie
+GROK2API_CONFIG__APP__FILTER_TAGS='[\"xaiartifact\",\"xai:tool_usage_card\",\"grok:render\"]'
+```
 
 | 模块 | 字段 | 配置名 | 说明 | 默认值 |
 | :-- | :-- | :-- | :-- | :-- |

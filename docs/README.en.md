@@ -80,6 +80,7 @@ docker compose up -d
 | `SERVER_WORKERS` | Uvicorn worker count | `1` | `2` |
 | `SERVER_STORAGE_TYPE` | Storage type (`local`/`redis`/`mysql`/`pgsql`) | `local` | `pgsql` |
 | `SERVER_STORAGE_URL` | Storage DSN (optional for local) | `""` | `postgresql+asyncpg://user:password@host:5432/db` |
+| `GROK2API_CONFIG__<SECTION>__<KEY>` | Override any `data/config.toml` key (highest priority) | No override when unset | `GROK2API_CONFIG__APP__APP_KEY=your-password` |
 
 > MySQL example: `mysql+aiomysql://user:password@host:3306/db` (if you provide `mysql://`, it will be converted to `mysql+aiomysql://`).
 
@@ -275,6 +276,22 @@ Config file: `data/config.toml`
 > [!TIP]
 > **v2.0 config migration**: old configs are automatically migrated. The old `[grok]` section
 > is mapped into the new config structure.
+
+### Environment Variable Overrides (Recommended for Cloud Docker)
+
+- Mapping rule: `section.key` → `GROK2API_CONFIG__SECTION__KEY` (uppercase, `.` replaced by `__`)
+- Priority: `environment variable > data/config.toml > config.defaults.toml`
+- Value parsing: follows field types from `config.defaults.toml` (bool/number/string/JSON array/object)
+- Admin panel behavior: env-managed fields are locked and display guidance to remove the env var before editing
+
+Example:
+
+```bash
+GROK2API_CONFIG__APP__APP_KEY=your-admin-password
+GROK2API_CONFIG__APP__API_KEY=your-api-token
+GROK2API_CONFIG__PROXY__CF_CLEARANCE=your-cookie
+GROK2API_CONFIG__APP__FILTER_TAGS='[\"xaiartifact\",\"xai:tool_usage_card\",\"grok:render\"]'
+```
 
 | Module | Field | Key | Description | Default |
 | :-- | :-- | :-- | :-- | :-- |

@@ -11,12 +11,16 @@ services:
       SERVER_WORKERS: 1
       SERVER_STORAGE_TYPE: local
       # SERVER_STORAGE_URL: 
+      # GROK2API_CONFIG__APP__APP_KEY: your-admin-password
+      # GROK2API_CONFIG__APP__API_KEY: your-api-token
+      # GROK2API_CONFIG__PROXY__CF_CLEARANCE: your-cf-clearance
 
       # SERVER_STORAGE_TYPE: (local, redis, mysql, pgsql) default: local
       # SERVER_STORAGE_URL: (local mode is empty) default: empty
       #   Redis: redis://localhost:6379/0 or redis://:password@localhost:6379/0
       #   MySQL: mysql+aiomysql://user:pass@localhost/db
       #   PgSQL: postgresql+asyncpg://user:pass@localhost/db
+      # GROK2API_CONFIG__<SECTION>__<KEY>: 覆盖 config.toml 对应字段，且优先级更高
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

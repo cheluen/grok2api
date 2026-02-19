@@ -26,9 +26,24 @@
   gap: 14px;
 }
 
+.config-lock-summary {
+  padding: 12px 14px;
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+
 .config-field {
   padding-top: 2px;
   position: relative;
+}
+
+.config-field-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .config-field-title {
@@ -37,14 +52,45 @@
   color: var(--accents-7);
 }
 
+.config-lock-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+}
+
 .config-field-desc {
   font-size: 12px;
   color: var(--accents-4);
   line-height: 1.5;
 }
 
+.config-field-lock-desc {
+  font-size: 12px;
+  color: #b45309;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
 .config-field-input {
   margin-top: 6px;
+}
+
+.config-field.is-locked .geist-input,
+.config-field.is-locked textarea,
+.config-field.is-locked select {
+  background: #f5f5f5;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+.config-field.is-locked label {
+  cursor: not-allowed;
 }
 
 .config-field.has-action {
