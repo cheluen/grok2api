@@ -32,6 +32,25 @@ cd grok2api
 docker compose up -d
 ```
 
+### Docker（纯环境变量部署，无需维护 config.toml）
+
+> 适用于云托管 Docker 平台（Railway / Render / Fly.io / Koyeb / 自建容器平台等）。
+
+```bash
+docker run -d --name grok2api -p 8000:8000 \
+  -e SERVER_STORAGE_TYPE=redis \
+  -e SERVER_STORAGE_URL=redis://:password@redis:6379/0 \
+  -e GROK2API_CONFIG__APP__APP_KEY=your-admin-password \
+  -e GROK2API_CONFIG__APP__API_KEY=your-api-key \
+  -e GROK2API_CONFIG__APP__APP_URL=https://your-domain.example \
+  -e GROK2API_CONFIG__PROXY__CF_CLEARANCE=your-cf-clearance \
+  ghcr.io/cheluen/grok2api:latest
+```
+
+- 若某配置项使用环境变量设置，则运行时优先级高于 `data/config.toml`
+- 建议把密钥类参数仅放在平台 Secret/Environment 中，避免写入配置文件
+- 管理面板会自动锁定环境变量托管项；如需修改，先删除对应环境变量并重启服务
+
 ### Vercel 部署
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/chenyme/grok2api&env=LOG_LEVEL,LOG_FILE_ENABLED,DATA_DIR,SERVER_STORAGE_TYPE,SERVER_STORAGE_URL&envDefaults=%7B%22DATA_DIR%22%3A%22/tmp/data%22%2C%22LOG_FILE_ENABLED%22%3A%22false%22%2C%22LOG_LEVEL%22%3A%22INFO%22%2C%22SERVER_STORAGE_TYPE%22%3A%22local%22%2C%22SERVER_STORAGE_URL%22%3A%22%22%7D)
@@ -83,6 +102,20 @@ docker compose up -d
 | `GROK2API_CONFIG__<SECTION>__<KEY>` | 覆盖 `data/config.toml` 中任意配置项（优先级最高） | 未设置时不覆盖 | `GROK2API_CONFIG__APP__APP_KEY=your-password` |
 
 > MySQL 示例：`mysql+aiomysql://user:password@host:3306/db`（若填 `mysql://` 会自动转为 `mysql+aiomysql://`）
+
+### 云托管部署（仅环境变量）指引
+
+1. 在云平台的环境变量面板中设置运行参数（如 `SERVER_STORAGE_TYPE`、`SERVER_STORAGE_URL`）
+2. 通过 `GROK2API_CONFIG__<SECTION>__<KEY>` 注入业务配置（如 `app.app_key`、`proxy.cf_clearance`）
+3. 不在仓库中提交敏感配置，不依赖手动维护 `data/config.toml`
+4. 修改受环境变量托管的字段时，先删除对应环境变量，再重启容器后到管理面板修改
+
+常见映射示例：
+
+- `app.app_key` -> `GROK2API_CONFIG__APP__APP_KEY`
+- `app.api_key` -> `GROK2API_CONFIG__APP__API_KEY`
+- `proxy.cf_clearance` -> `GROK2API_CONFIG__PROXY__CF_CLEARANCE`
+- `app.filter_tags` -> `GROK2API_CONFIG__APP__FILTER_TAGS`（值使用 JSON 字符串）
 
 <br>
 
@@ -283,6 +316,7 @@ curl http://localhost:8000/v1/images/edits \
 - 优先级：`环境变量 > data/config.toml > config.defaults.toml`
 - 类型规则：按 `config.defaults.toml` 的字段类型解析（布尔/数字/字符串/JSON 数组或对象）
 - 管理面板中，来自环境变量的配置项会自动锁定，并提示“若需修改需先移除环境变量并重启服务”
+- 即使不手动维护 `data/config.toml`，也可仅通过环境变量完成部署（默认值与 `config.defaults.toml` 对齐）
 
 示例：
 

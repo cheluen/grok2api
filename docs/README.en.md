@@ -32,6 +32,25 @@ cd grok2api
 docker compose up -d
 ```
 
+### Docker (Environment-Only Deployment, No Manual `config.toml`)
+
+> Recommended for cloud-hosted Docker platforms (Railway / Render / Fly.io / Koyeb / self-hosted containers).
+
+```bash
+docker run -d --name grok2api -p 8000:8000 \
+  -e SERVER_STORAGE_TYPE=redis \
+  -e SERVER_STORAGE_URL=redis://:password@redis:6379/0 \
+  -e GROK2API_CONFIG__APP__APP_KEY=your-admin-password \
+  -e GROK2API_CONFIG__APP__API_KEY=your-api-key \
+  -e GROK2API_CONFIG__APP__APP_URL=https://your-domain.example \
+  -e GROK2API_CONFIG__PROXY__CF_CLEARANCE=your-cf-clearance \
+  ghcr.io/cheluen/grok2api:latest
+```
+
+- If a key is set by env var, it has higher runtime priority than `data/config.toml`
+- Keep secret values in platform Secrets/Environment instead of config files
+- Env-managed fields are locked in admin panel; to change them, remove the env var and restart
+
 ### Vercel
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/chenyme/grok2api&env=LOG_LEVEL,LOG_FILE_ENABLED,DATA_DIR,SERVER_STORAGE_TYPE,SERVER_STORAGE_URL&envDefaults=%7B%22DATA_DIR%22%3A%22/tmp/data%22%2C%22LOG_FILE_ENABLED%22%3A%22false%22%2C%22LOG_LEVEL%22%3A%22INFO%22%2C%22SERVER_STORAGE_TYPE%22%3A%22local%22%2C%22SERVER_STORAGE_URL%22%3A%22%22%7D)
@@ -83,6 +102,20 @@ docker compose up -d
 | `GROK2API_CONFIG__<SECTION>__<KEY>` | Override any `data/config.toml` key (highest priority) | No override when unset | `GROK2API_CONFIG__APP__APP_KEY=your-password` |
 
 > MySQL example: `mysql+aiomysql://user:password@host:3306/db` (if you provide `mysql://`, it will be converted to `mysql+aiomysql://`).
+
+### Cloud Deployment Guide (Environment Variables Only)
+
+1. Set runtime variables in your platform env panel (`SERVER_STORAGE_TYPE`, `SERVER_STORAGE_URL`, etc.)
+2. Inject business config via `GROK2API_CONFIG__<SECTION>__<KEY>` (`app.app_key`, `proxy.cf_clearance`, etc.)
+3. Do not commit sensitive values to repository files, and do not rely on manually editing `data/config.toml`
+4. To change an env-managed field, remove that env var first, restart the container, then edit in admin panel
+
+Common mappings:
+
+- `app.app_key` -> `GROK2API_CONFIG__APP__APP_KEY`
+- `app.api_key` -> `GROK2API_CONFIG__APP__API_KEY`
+- `proxy.cf_clearance` -> `GROK2API_CONFIG__PROXY__CF_CLEARANCE`
+- `app.filter_tags` -> `GROK2API_CONFIG__APP__FILTER_TAGS` (value should be a JSON string)
 
 <br>
 
@@ -283,6 +316,7 @@ Config file: `data/config.toml`
 - Priority: `environment variable > data/config.toml > config.defaults.toml`
 - Value parsing: follows field types from `config.defaults.toml` (bool/number/string/JSON array/object)
 - Admin panel behavior: env-managed fields are locked and display guidance to remove the env var before editing
+- You can run with environment variables only (without manually maintaining `data/config.toml`), and defaults still follow `config.defaults.toml`
 
 Example:
 
