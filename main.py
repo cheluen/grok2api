@@ -65,7 +65,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"Platform: {platform.system()} {platform.release()}")
     logger.info(f"Python: {sys.version.split()[0]}")
 
-    # 4. 启动 Token 刷新调度器
+    # 4. 预热 CF Clearance（如果配置了自动获取服务）
+    try:
+        from app.services.cf_clearance import get_cf_clearance_service
+        service = get_cf_clearance_service()
+        if service.is_enabled():
+            logger.info("Pre-warming CF Clearance...")
+            cf_clearance = await service.get_clearance()
+            if cf_clearance:
+                logger.info("CF Clearance pre-warmed successfully")
+            else:
+                logger.warning("CF Clearance pre-warm failed, will retry on demand")
+    except Exception as e:
+        logger.warning(f"Failed to pre-warm CF Clearance: {e}")
+
+    # 5. 启动 Token 刷新调度器
     refresh_enabled = get_config("token.auto_refresh", True)
     if refresh_enabled:
         basic_interval = get_config("token.refresh_interval_hours", 8)

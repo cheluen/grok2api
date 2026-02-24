@@ -11,7 +11,44 @@ from app.core.config import get_config
 from app.services.reverse.utils.statsig import StatsigGenerator
 
 
+def _get_cached_cf_clearance() -> Optional[str]:
+    try:
+        from app.services.cf_clearance.cache import get_cache_manager
+        from app.core.config import get_config
+        
+        manager = get_cache_manager()
+        browser = get_config("proxy.browser", "chrome136")
+        proxy = get_config("proxy.base_proxy_url")
+        
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        
+        if loop is not None:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    manager.get_cached(browser, proxy)
+                )
+                cache = future.result(timeout=5)
+        else:
+            cache = asyncio.run(manager.get_cached(browser, proxy))
+        
+        if cache and cache.cf_clearance:
+            return cache.cf_clearance
+    except Exception as e:
+        logger.debug(f"Failed to get cached CF Clearance: {e}")
+    return None
+
+
 def _get_cf_clearance() -> Optional[str]:
+    cached = _get_cached_cf_clearance()
+    if cached:
+        return cached
+    
     cf_clearance = get_config("proxy.cf_clearance")
     return cf_clearance if cf_clearance else None
 
