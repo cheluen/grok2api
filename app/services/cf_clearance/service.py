@@ -120,12 +120,22 @@ class CFClearanceService:
                     logger.error(f"CF Clearance service failed: {error}")
                     return None
                 
+                cf_clearance_value = data.get("cf_clearance") or ""
+                
+                if not cf_clearance_value:
+                    challenge_type = data.get("challenge_type", "unknown")
+                    logger.warning(
+                        f"CF Clearance not obtained: challenge_type={challenge_type}, "
+                        f"target may not have CF protection"
+                    )
+                    return None
+                
                 cache = CFClearanceCache(
-                    cf_clearance=data.get("cf_clearance", ""),
-                    user_agent=data.get("user_agent", ""),
-                    browser=data.get("browser", browser),
+                    cf_clearance=cf_clearance_value,
+                    user_agent=data.get("user_agent") or "",
+                    browser=data.get("browser") or browser,
                     proxy=proxy,
-                    expires_at=data.get("expires_at", 0),
+                    expires_at=data.get("expires_at") or 0,
                     cookie_string=data.get("cookie_string"),
                     cookies=data.get("cookies")
                 )
