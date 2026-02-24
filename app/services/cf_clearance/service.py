@@ -45,7 +45,9 @@ class CFClearanceService:
     
     def is_enabled(self) -> bool:
         service_url = self._get_service_url()
-        return bool(service_url)
+        enabled = bool(service_url)
+        logger.debug(f"CF Clearance service enabled: {enabled}, url: {service_url}")
+        return enabled
     
     async def fetch_from_service(
         self,
@@ -89,18 +91,25 @@ class CFClearanceService:
         if api_key:
             headers["X-API-Key"] = api_key
         
+        full_url = f"{service_url.rstrip('/')}/api/v1/credentials"
+        
+        logger.info(f"Requesting CF Clearance from: {full_url}")
+        logger.debug(f"CF Clearance request payload: browser={browser}, proxy={'***' if proxy else None}, timeout={timeout}")
+        
         try:
             async with httpx.AsyncClient(timeout=timeout + 10) as client:
                 response = await client.post(
-                    f"{service_url.rstrip('/')}/api/v1/credentials",
+                    full_url,
                     json=payload,
                     headers=headers
                 )
                 
+                logger.info(f"CF Clearance service response: {response.status_code}")
+                
                 if response.status_code != 200:
                     logger.error(
                         f"CF Clearance service returned {response.status_code}: "
-                        f"{response.text[:200]}"
+                        f"{response.text[:500]}"
                     )
                     return None
                 
@@ -122,17 +131,18 @@ class CFClearanceService:
                 )
                 
                 logger.info(
-                    f"CF Clearance obtained: browser={cache.browser}, "
+                    f"CF Clearance obtained successfully: browser={cache.browser}, "
+                    f"cf_clearance={cache.cf_clearance[:20]}..., "
                     f"expires_at={cache.expires_at}"
                 )
                 
                 return cache
                 
         except httpx.TimeoutException:
-            logger.error("CF Clearance service request timeout")
+            logger.error(f"CF Clearance service request timeout (timeout={timeout}s)")
             return None
         except Exception as e:
-            logger.error(f"Failed to fetch CF Clearance: {e}")
+            logger.error(f"Failed to fetch CF Clearance: {e}", exc_info=True)
             return None
     
     async def get_clearance(
