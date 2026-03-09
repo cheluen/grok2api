@@ -4,7 +4,7 @@ CF Clearance 集成模块
 提供与现有代码集成的便捷功能。
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 from app.core.logger import logger
 from app.core.config import get_config
 from app.services.cf_clearance.service import get_cf_clearance_service

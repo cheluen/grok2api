@@ -11,7 +11,6 @@ from app.core.logger import logger
 from app.core.config import get_config
 from app.services.cf_clearance.cache import (
     CFClearanceCache, 
-    CFClearanceCacheManager,
     get_cache_manager
 )
 

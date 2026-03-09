@@ -1,5 +1,6 @@
 """Shared header builders for reverse interfaces."""
 
+import re
 import uuid
 import orjson
 import asyncio
@@ -10,33 +11,75 @@ from app.core.logger import logger
 from app.core.config import get_config
 from app.services.reverse.utils.statsig import StatsigGenerator
 
+_HEADER_CHAR_REPLACEMENTS = str.maketrans(
+    {
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen
+        "\u2012": "-",  # figure dash
+        "\u2013": "-",  # en dash
+        "\u2014": "-",  # em dash
+        "\u2212": "-",  # minus sign
+        "\u2018": "'",  # left single quote
+        "\u2019": "'",  # right single quote
+        "\u201c": '"',  # left double quote
+        "\u201d": '"',  # right double quote
+        "\u00a0": " ",  # nbsp
+        "\u2007": " ",  # figure space
+        "\u202f": " ",  # narrow nbsp
+        "\u200b": "",  # zero width space
+        "\u200c": "",  # zero width non-joiner
+        "\u200d": "",  # zero width joiner
+        "\ufeff": "",  # bom
+    }
+)
+
+
+def _sanitize_header_value(
+    value: Optional[str],
+    *,
+    field_name: str,
+    remove_all_spaces: bool = False,
+) -> str:
+    """Normalize header values and make sure they are latin-1 safe."""
+    raw = "" if value is None else str(value)
+    normalized = raw.translate(_HEADER_CHAR_REPLACEMENTS)
+    if remove_all_spaces:
+        normalized = re.sub(r"\s+", "", normalized)
+    else:
+        normalized = normalized.strip()
+
+    # curl_cffi header encoding defaults to latin-1.
+    normalized = normalized.encode("latin-1", errors="ignore").decode("latin-1")
+
+    if normalized != raw:
+        logger.warning(
+            f"Sanitized header field '{field_name}' (len {len(raw)} -> {len(normalized)})"
+        )
+    return normalized
+
+
+def _run_coroutine_sync(coro, *, timeout: float = 5.0):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=timeout)
+    return asyncio.run(coro)
+
 
 def _get_cached_cf_clearance() -> Optional[str]:
     try:
         from app.services.cf_clearance.cache import get_cache_manager
-        from app.core.config import get_config
-        
+
         manager = get_cache_manager()
         browser = get_config("proxy.browser", "chrome136")
         proxy = get_config("proxy.base_proxy_url")
-        
-        loop = None
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        
-        if loop is not None:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    manager.get_cached(browser, proxy)
-                )
-                cache = future.result(timeout=5)
-        else:
-            cache = asyncio.run(manager.get_cached(browser, proxy))
-        
+        cache = _run_coroutine_sync(manager.get_cached(browser, proxy))
         if cache and cache.cf_clearance:
             return cache.cf_clearance
     except Exception as e:
@@ -48,9 +91,55 @@ def _get_cf_clearance() -> Optional[str]:
     cached = _get_cached_cf_clearance()
     if cached:
         return cached
-    
+
+    try:
+        from app.services.cf_clearance import get_cf_clearance_service
+
+        service = get_cf_clearance_service()
+        if service.is_enabled():
+            fetched = _run_coroutine_sync(service.get_clearance(), timeout=15)
+            if fetched:
+                return fetched
+    except Exception as e:
+        logger.debug(f"Failed to sync-fetch CF Clearance: {e}")
+
     cf_clearance = get_config("proxy.cf_clearance")
     return cf_clearance if cf_clearance else None
+
+
+def _merge_cf_cookie_string(
+    cookie: str,
+    *,
+    cf_cookies: str,
+    cf_clearance: str,
+    cf_refresh_enabled: bool,
+) -> str:
+    merged_cookies = cf_cookies
+
+    if cf_refresh_enabled:
+        if not merged_cookies and cf_clearance:
+            merged_cookies = f"cf_clearance={cf_clearance}"
+    elif cf_clearance:
+        if merged_cookies:
+            if re.search(r"(?:^|;\s*)cf_clearance=", merged_cookies):
+                merged_cookies = re.sub(
+                    r"(^|;\s*)cf_clearance=[^;]*",
+                    r"\1cf_clearance=" + cf_clearance,
+                    merged_cookies,
+                    count=1,
+                )
+            else:
+                merged_cookies = merged_cookies.rstrip("; ")
+                merged_cookies = f"{merged_cookies}; cf_clearance={cf_clearance}"
+        else:
+            merged_cookies = f"cf_clearance={cf_clearance}"
+
+    if merged_cookies:
+        if cookie and not cookie.endswith(";"):
+            cookie += "; "
+        cookie += merged_cookies
+
+    return cookie
 
 
 async def _get_cf_clearance_auto() -> Optional[str]:
@@ -82,14 +171,29 @@ def build_sso_cookie(sso_token: str) -> str:
         str: The SSO Cookie string.
     """
     sso_token = sso_token[4:] if sso_token.startswith("sso=") else sso_token
+    sso_token = _sanitize_header_value(
+        sso_token, field_name="sso_token", remove_all_spaces=True
+    )
 
     cookie = f"sso={sso_token}; sso-rw={sso_token}"
 
-    cf_clearance = _get_cf_clearance()
-    if cf_clearance:
-        cookie += f";cf_clearance={cf_clearance}"
+    # CF Cookies
+    cf_cookies = _sanitize_header_value(
+        get_config("proxy.cf_cookies") or "", field_name="proxy.cf_cookies"
+    )
+    cf_clearance = _sanitize_header_value(
+        _get_cf_clearance() or "",
+        field_name="proxy.cf_clearance",
+        remove_all_spaces=True,
+    )
+    cf_refresh_enabled = bool(get_config("proxy.enabled"))
 
-    return cookie
+    return _merge_cf_cookie_string(
+        cookie,
+        cf_cookies=cf_cookies,
+        cf_clearance=cf_clearance,
+        cf_refresh_enabled=cf_refresh_enabled,
+    )
 
 
 async def build_sso_cookie_async(sso_token: str) -> str:
@@ -103,14 +207,116 @@ async def build_sso_cookie_async(sso_token: str) -> str:
         str: The SSO Cookie string.
     """
     sso_token = sso_token[4:] if sso_token.startswith("sso=") else sso_token
+    sso_token = _sanitize_header_value(
+        sso_token, field_name="sso_token", remove_all_spaces=True
+    )
 
     cookie = f"sso={sso_token}; sso-rw={sso_token}"
+    cf_cookies = _sanitize_header_value(
+        get_config("proxy.cf_cookies") or "", field_name="proxy.cf_cookies"
+    )
+    cf_clearance = _sanitize_header_value(
+        await _get_cf_clearance_auto() or "",
+        field_name="proxy.cf_clearance",
+        remove_all_spaces=True,
+    )
+    cf_refresh_enabled = bool(get_config("proxy.enabled"))
 
-    cf_clearance = await _get_cf_clearance_auto()
-    if cf_clearance:
-        cookie += f";cf_clearance={cf_clearance}"
+    return _merge_cf_cookie_string(
+        cookie,
+        cf_cookies=cf_cookies,
+        cf_clearance=cf_clearance,
+        cf_refresh_enabled=cf_refresh_enabled,
+    )
 
-    return cookie
+
+def _extract_major_version(browser: Optional[str], user_agent: Optional[str]) -> Optional[str]:
+    if browser:
+        match = re.search(r"(\d{2,3})", browser)
+        if match:
+            return match.group(1)
+    if user_agent:
+        for pattern in [r"Edg/(\d+)", r"Chrome/(\d+)", r"Chromium/(\d+)"]:
+            match = re.search(pattern, user_agent)
+            if match:
+                return match.group(1)
+    return None
+
+
+def _detect_platform(user_agent: str) -> Optional[str]:
+    ua = user_agent.lower()
+    if "windows" in ua:
+        return "Windows"
+    if "mac os x" in ua or "macintosh" in ua:
+        return "macOS"
+    if "android" in ua:
+        return "Android"
+    if "iphone" in ua or "ipad" in ua:
+        return "iOS"
+    if "linux" in ua:
+        return "Linux"
+    return None
+
+
+def _detect_arch(user_agent: str) -> Optional[str]:
+    ua = user_agent.lower()
+    if "aarch64" in ua or "arm" in ua:
+        return "arm"
+    if "x86_64" in ua or "x64" in ua or "win64" in ua or "intel" in ua:
+        return "x86"
+    return None
+
+
+def _build_client_hints(browser: Optional[str], user_agent: Optional[str]) -> Dict[str, str]:
+    browser = (browser or "").strip().lower()
+    user_agent = user_agent or ""
+    ua = user_agent.lower()
+
+    is_edge = "edge" in browser or "edg" in ua
+    is_brave = "brave" in browser
+    is_chromium = any(key in browser for key in ["chrome", "chromium", "edge", "brave"]) or (
+        "chrome" in ua or "chromium" in ua or "edg" in ua
+    )
+    is_firefox = "firefox" in ua or "firefox" in browser
+    is_safari = ("safari" in ua and "chrome" not in ua and "chromium" not in ua and "edg" not in ua) or "safari" in browser
+
+    if not is_chromium or is_firefox or is_safari:
+        return {}
+
+    version = _extract_major_version(browser, user_agent)
+    if not version:
+        return {}
+
+    if is_edge:
+        brand = "Microsoft Edge"
+    elif "chromium" in browser:
+        brand = "Chromium"
+    elif is_brave:
+        brand = "Brave"
+    else:
+        brand = "Google Chrome"
+
+    sec_ch_ua = (
+        f"\"{brand}\";v=\"{version}\", "
+        f"\"Chromium\";v=\"{version}\", "
+        "\"Not(A:Brand\";v=\"24\""
+    )
+
+    platform = _detect_platform(user_agent)
+    arch = _detect_arch(user_agent)
+    mobile = "?1" if ("mobile" in ua or platform in ("Android", "iOS")) else "?0"
+
+    hints = {
+        "Sec-Ch-Ua": sec_ch_ua,
+        "Sec-Ch-Ua-Mobile": mobile,
+    }
+    if platform:
+        hints["Sec-Ch-Ua-Platform"] = f"\"{platform}\""
+    if arch:
+        hints["Sec-Ch-Ua-Arch"] = arch
+        hints["Sec-Ch-Ua-Bitness"] = "64"
+    hints["Sec-Ch-Ua-Model"] = "" if mobile == "?0" else ""
+    return hints
 
 
 def build_ws_headers(token: Optional[str] = None, origin: Optional[str] = None, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -125,13 +331,21 @@ def build_ws_headers(token: Optional[str] = None, origin: Optional[str] = None, 
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    user_agent = _sanitize_header_value(
+        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+    )
+    safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
     headers = {
-        "Origin": origin or "https://grok.com",
-        "User-Agent": get_config("proxy.user_agent"),
+        "Origin": safe_origin,
+        "User-Agent": user_agent,
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
     }
+
+    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    if client_hints:
+        headers.update(client_hints)
 
     if token:
         headers["Cookie"] = build_sso_cookie(token)
@@ -155,22 +369,27 @@ def build_headers(cookie_token: str, content_type: Optional[str] = None, origin:
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    user_agent = _sanitize_header_value(
+        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+    )
+    safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
+    safe_referer = _sanitize_header_value(
+        referer or "https://grok.com/", field_name="referer"
+    )
     headers = {
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Baggage": "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
-        "Origin": origin or "https://grok.com",
+        "Origin": safe_origin,
         "Priority": "u=1, i",
-        "Referer": referer or "https://grok.com/",
-        "Sec-Ch-Ua": '"Google Chrome";v="136", "Chromium";v="136", "Not(A:Brand";v="24"',
-        "Sec-Ch-Ua-Arch": "arm",
-        "Sec-Ch-Ua-Bitness": "64",
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Model": "",
-        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Referer": safe_referer,
         "Sec-Fetch-Mode": "cors",
-        "User-Agent": get_config("proxy.user_agent"),
+        "User-Agent": user_agent,
     }
+
+    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    if client_hints:
+        headers.update(client_hints)
 
     headers["Cookie"] = build_sso_cookie(cookie_token)
 
@@ -218,22 +437,27 @@ async def build_headers_async(cookie_token: str, content_type: Optional[str] = N
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    user_agent = _sanitize_header_value(
+        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+    )
+    safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
+    safe_referer = _sanitize_header_value(
+        referer or "https://grok.com/", field_name="referer"
+    )
     headers = {
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Baggage": "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
-        "Origin": origin or "https://grok.com",
+        "Origin": safe_origin,
         "Priority": "u=1, i",
-        "Referer": referer or "https://grok.com/",
-        "Sec-Ch-Ua": '"Google Chrome";v="136", "Chromium";v="136", "Not(A:Brand";v="24"',
-        "Sec-Ch-Ua-Arch": "arm",
-        "Sec-Ch-Ua-Bitness": "64",
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Model": "",
-        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Referer": safe_referer,
         "Sec-Fetch-Mode": "cors",
-        "User-Agent": get_config("proxy.user_agent"),
+        "User-Agent": user_agent,
     }
+
+    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    if client_hints:
+        headers.update(client_hints)
 
     headers["Cookie"] = await build_sso_cookie_async(cookie_token)
 

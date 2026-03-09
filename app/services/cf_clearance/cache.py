@@ -6,7 +6,7 @@ CF Clearance 缓存管理
 
 import time
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from dataclasses import dataclass
 
 from app.core.logger import logger

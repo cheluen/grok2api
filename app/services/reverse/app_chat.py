@@ -4,6 +4,7 @@ Reverse interface: app chat conversations.
 
 import orjson
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from curl_cffi.requests import AsyncSession
 
 from app.core.logger import logger
@@ -16,8 +17,33 @@ from app.services.reverse.utils.retry import retry_on_status
 CHAT_API = "https://grok.com/rest/app-chat/conversations/new"
 
 
+def _normalize_chat_proxy(proxy_url: str) -> str:
+    """Normalize proxy URL for curl-cffi app-chat requests."""
+    if not proxy_url:
+        return proxy_url
+    parsed = urlparse(proxy_url)
+    scheme = parsed.scheme.lower()
+    if scheme == "socks5":
+        return proxy_url.replace("socks5://", "socks5h://", 1)
+    if scheme == "socks4":
+        return proxy_url.replace("socks4://", "socks4a://", 1)
+    return proxy_url
+
+
 class AppChatReverse:
     """/rest/app-chat/conversations/new reverse interface."""
+
+    @staticmethod
+    def _resolve_custom_personality() -> Optional[str]:
+        """Resolve optional custom personality from app config."""
+        value = get_config("app.custom_instruction", "")
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            value = str(value)
+        if not value.strip():
+            return None
+        return value
 
     @staticmethod
     def build_payload(
@@ -36,10 +62,10 @@ class AppChatReverse:
             "deviceEnvInfo": {
                 "darkModeEnabled": False,
                 "devicePixelRatio": 2,
-                "screenWidth": 2056,
                 "screenHeight": 1329,
-                "viewportWidth": 2056,
+                "screenWidth": 2056,
                 "viewportHeight": 1083,
+                "viewportWidth": 2056,
             },
             "disableMemory": get_config("app.disable_memory"),
             "disableSearch": False,
@@ -68,8 +94,18 @@ class AppChatReverse:
             "toolOverrides": tool_overrides or {},
         }
 
+        if model == "grok-420":
+            payload["enable420"] = True
+
+        custom_personality = AppChatReverse._resolve_custom_personality()
+        if custom_personality is not None:
+            payload["customPersonality"] = custom_personality
+
         if model_config_override:
             payload["responseMetadata"]["modelConfigOverride"] = model_config_override
+
+        import json
+        logger.debug(f"AppChatReverse payload: {json.dumps(payload, indent=4, ensure_ascii=False)}")
 
         return payload
 
@@ -102,7 +138,21 @@ class AppChatReverse:
         try:
             # Get proxies
             base_proxy = get_config("proxy.base_proxy_url")
-            proxies = {"http": base_proxy, "https": base_proxy} if base_proxy else None
+            proxy = None
+            proxies = None
+            if base_proxy:
+                normalized_proxy = _normalize_chat_proxy(base_proxy)
+                scheme = urlparse(normalized_proxy).scheme.lower()
+                if scheme.startswith("socks"):
+                    # curl_cffi 对 SOCKS 代理优先使用 proxy 参数，避免被按 HTTP CONNECT 处理
+                    proxy = normalized_proxy
+                else:
+                    proxies = {"http": normalized_proxy, "https": normalized_proxy}
+                logger.info(
+                    f"AppChatReverse proxy enabled: scheme={scheme}, target={normalized_proxy}"
+                )
+            else:
+                logger.warning("AppChatReverse proxy is empty, request will use direct network")
 
             # Build headers
             headers = build_headers(
@@ -121,13 +171,25 @@ class AppChatReverse:
                 tool_overrides=tool_overrides,
                 model_config_override=model_config_override,
             )
+            payload_summary = {
+                "model": payload.get("modelName"),
+                "mode": payload.get("modelMode"),
+                "message_len": payload.get("message") or "",
+                "file_attachments": len(payload.get("fileAttachments") or []),
+                "custom_personality_len": len(payload.get("customPersonality") or ""),
+            }
+            logger.debug(
+                "AppChatReverse final Grok params (redacted)",
+                extra={"grok_payload": payload_summary},
+            )
 
             # Curl Config
-            timeout = max(
-                float(get_config("chat.timeout") or 0),
-                float(get_config("video.timeout") or 0),
-                float(get_config("image.timeout") or 0),
-            )
+            timeout = float(get_config("chat.timeout") or 0)
+            if timeout <= 0:
+                timeout = max(
+                    float(get_config("video.timeout") or 0),
+                    float(get_config("image.timeout") or 0),
+                )
             browser = get_config("proxy.browser")
 
             async def _do_request():
@@ -137,6 +199,7 @@ class AppChatReverse:
                     data=orjson.dumps(payload),
                     timeout=timeout,
                     stream=True,
+                    proxy=proxy,
                     proxies=proxies,
                     impersonate=browser,
                 )
@@ -150,6 +213,10 @@ class AppChatReverse:
                     except Exception:
                         pass
 
+                    logger.debug(
+                        "AppChatReverse: Chat failed response body: %s",
+                        content,
+                    )
                     logger.error(
                         f"AppChatReverse: Chat failed, {response.status_code}",
                         extra={"error_type": "UpstreamException"},

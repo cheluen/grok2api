@@ -20,6 +20,10 @@ DEFAULT_ENV_PREFIX = "GROK2API_CONFIG__"
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off"}
 _ENV_SEGMENT_PATTERN = re.compile(r"[^A-Z0-9]+")
+_LEGACY_PATH_ALIASES = {
+    "app.function_enabled": ["app.public_enabled"],
+    "app.function_key": ["app.public_key"],
+}
 
 
 @dataclass
@@ -47,8 +51,8 @@ class EnvConfigOverlay:
 
         result = EnvOverrideResult()
         for path in paths:
-            env_var = self.path_to_env_var(path)
-            if env_var not in self._environ:
+            env_var = self._resolve_env_var(path)
+            if not env_var:
                 continue
 
             template = templates.get(path, baseline_values.get(path))
@@ -63,6 +67,14 @@ class EnvConfigOverlay:
             result.locked_paths[path] = env_var
 
         return result
+
+    def _resolve_env_var(self, path: str) -> str | None:
+        candidates = [path, *_LEGACY_PATH_ALIASES.get(path, [])]
+        for candidate in candidates:
+            env_var = self.path_to_env_var(candidate)
+            if env_var in self._environ:
+                return env_var
+        return None
 
     def path_to_env_var(self, path: str) -> str:
         segments = [seg for seg in path.split(".") if seg]
