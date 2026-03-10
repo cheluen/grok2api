@@ -8,6 +8,7 @@ from curl_cffi.requests import AsyncSession
 
 from app.core.logger import logger
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.exceptions import UpstreamException
 from app.services.token.service import TokenService
 from app.services.reverse.utils.headers import build_headers
@@ -60,7 +61,7 @@ class MediaPostReverse:
 
             # Curl Config
             timeout = get_config("video.timeout")
-            browser = get_config("proxy.browser")
+            browser = resolve_impersonate_browser()
 
             async def _do_request():
                 response = await session.post(

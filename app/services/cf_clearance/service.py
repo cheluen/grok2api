@@ -190,6 +190,15 @@ class CFClearanceService:
         finally:
             await self._cache_manager.set_refreshing(False)
     
+    async def peek_cache(
+        self,
+        browser: Optional[str] = None,
+        proxy: Optional[str] = None,
+    ) -> Optional[CFClearanceCache]:
+        browser = browser or self._get_browser()
+        proxy = proxy if proxy is not None else self._get_proxy()
+        return await self._cache_manager.get_cached(browser, proxy)
+
     async def get_cache(
         self,
         browser: Optional[str] = None,

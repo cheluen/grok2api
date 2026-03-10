@@ -6,6 +6,7 @@ import asyncio
 from typing import Dict, List, Optional
 
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.logger import logger
 from app.services.reverse.assets_list import AssetsListReverse
 from app.services.reverse.assets_delete import AssetsDeleteReverse
@@ -21,7 +22,7 @@ class BaseAssetsService:
 
     async def _get_session(self) -> ResettableSession:
         if self._session is None:
-            browser = get_config("proxy.browser")
+            browser = resolve_impersonate_browser()
             if browser:
                 self._session = ResettableSession(impersonate=browser)
             else:

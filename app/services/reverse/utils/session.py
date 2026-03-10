@@ -9,6 +9,7 @@ from curl_cffi.requests import AsyncSession
 from curl_cffi.const import CurlOpt
 
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.logger import logger
 
 
@@ -29,7 +30,7 @@ class ResettableSession:
     ):
         self._session_kwargs = dict(session_kwargs)
         if not self._session_kwargs.get("impersonate"):
-            browser = get_config("proxy.browser")
+            browser = resolve_impersonate_browser()
             if browser:
                 self._session_kwargs["impersonate"] = browser
         config_codes = get_config("retry.reset_session_status_codes")

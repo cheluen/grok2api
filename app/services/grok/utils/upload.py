@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import aiofiles
 
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.exceptions import AppException, UpstreamException, ValidationException
 from app.core.logger import logger
 from app.core.storage import DATA_DIR
@@ -33,7 +34,7 @@ class UploadService:
     async def create(self) -> ResettableSession:
         """Create or reuse a session."""
         if self._session is None:
-            browser = get_config("proxy.browser")
+            browser = resolve_impersonate_browser()
             if browser:
                 self._session = ResettableSession(impersonate=browser)
             else:

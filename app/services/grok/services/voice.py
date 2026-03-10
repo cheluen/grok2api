@@ -4,7 +4,7 @@ Grok Voice Mode Service
 
 from typing import Any, Dict
 
-from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.services.reverse.ws_livekit import LivekitTokenReverse
 from app.services.reverse.utils.session import ResettableSession
 
@@ -19,7 +19,7 @@ class VoiceService:
         personality: str = "assistant",
         speed: float = 1.0,
     ) -> Dict[str, Any]:
-        browser = get_config("proxy.browser")
+        browser = resolve_impersonate_browser()
         async with ResettableSession(impersonate=browser) as session:
             response = await LivekitTokenReverse.request(
                 session,

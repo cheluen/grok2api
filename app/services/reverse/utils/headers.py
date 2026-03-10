@@ -3,12 +3,11 @@
 import re
 import uuid
 import orjson
-import asyncio
 from urllib.parse import urlparse
 from typing import Dict, Optional
 
 from app.core.logger import logger
-from app.core.config import get_config
+from app.services.cf_credentials import CFCredentialsBundle, resolve_request_bundle_async, resolve_request_bundle_sync
 from app.services.reverse.utils.statsig import StatsigGenerator
 
 _HEADER_CHAR_REPLACEMENTS = str.maketrans(
@@ -58,53 +57,20 @@ def _sanitize_header_value(
     return normalized
 
 
-def _run_coroutine_sync(coro, *, timeout: float = 5.0):
+def _get_cf_credentials() -> CFCredentialsBundle:
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=timeout)
-    return asyncio.run(coro)
-
-
-def _get_cached_cf_clearance() -> Optional[str]:
-    try:
-        from app.services.cf_clearance.cache import get_cache_manager
-
-        manager = get_cache_manager()
-        browser = get_config("proxy.browser", "chrome136")
-        proxy = get_config("proxy.base_proxy_url")
-        cache = _run_coroutine_sync(manager.get_cached(browser, proxy))
-        if cache and cache.cf_clearance:
-            return cache.cf_clearance
+        return resolve_request_bundle_sync()
     except Exception as e:
-        logger.debug(f"Failed to get cached CF Clearance: {e}")
-    return None
+        logger.debug(f"Failed to sync-resolve CF credentials: {e}")
+        return CFCredentialsBundle()
 
 
-def _get_cf_clearance() -> Optional[str]:
-    cached = _get_cached_cf_clearance()
-    if cached:
-        return cached
-
+async def _get_cf_credentials_async() -> CFCredentialsBundle:
     try:
-        from app.services.cf_clearance import get_cf_clearance_service
-
-        service = get_cf_clearance_service()
-        if service.is_enabled():
-            fetched = _run_coroutine_sync(service.get_clearance(), timeout=15)
-            if fetched:
-                return fetched
+        return await resolve_request_bundle_async()
     except Exception as e:
-        logger.debug(f"Failed to sync-fetch CF Clearance: {e}")
-
-    cf_clearance = get_config("proxy.cf_clearance")
-    return cf_clearance if cf_clearance else None
+        logger.debug(f"Failed to async-resolve CF credentials: {e}")
+        return CFCredentialsBundle()
 
 
 def _merge_cf_cookie_string(
@@ -112,14 +78,10 @@ def _merge_cf_cookie_string(
     *,
     cf_cookies: str,
     cf_clearance: str,
-    cf_refresh_enabled: bool,
 ) -> str:
     merged_cookies = cf_cookies
 
-    if cf_refresh_enabled:
-        if not merged_cookies and cf_clearance:
-            merged_cookies = f"cf_clearance={cf_clearance}"
-    elif cf_clearance:
+    if cf_clearance:
         if merged_cookies:
             if re.search(r"(?:^|;\s*)cf_clearance=", merged_cookies):
                 merged_cookies = re.sub(
@@ -142,92 +104,37 @@ def _merge_cf_cookie_string(
     return cookie
 
 
-async def _get_cf_clearance_auto() -> Optional[str]:
-    try:
-        from app.services.cf_clearance import get_cf_clearance_service
-        
-        service = get_cf_clearance_service()
-        if not service.is_enabled():
-            return _get_cf_clearance()
-        
-        cf_clearance = await service.get_clearance()
-        if cf_clearance:
-            return cf_clearance
-        
-        return _get_cf_clearance()
-    except Exception as e:
-        logger.debug(f"Failed to auto-fetch CF Clearance: {e}")
-        return _get_cf_clearance()
+def _build_sso_cookie_from_bundle(sso_token: str, bundle: CFCredentialsBundle) -> str:
+    sso_token = sso_token[4:] if sso_token.startswith("sso=") else sso_token
+    sso_token = _sanitize_header_value(
+        sso_token, field_name="sso_token", remove_all_spaces=True
+    )
+
+    cookie = f"sso={sso_token}; sso-rw={sso_token}"
+    cf_cookies = _sanitize_header_value(
+        bundle.cf_cookies or "", field_name="proxy.cf_cookies"
+    )
+    cf_clearance = _sanitize_header_value(
+        bundle.cf_clearance or "",
+        field_name="proxy.cf_clearance",
+        remove_all_spaces=True,
+    )
+
+    return _merge_cf_cookie_string(
+        cookie,
+        cf_cookies=cf_cookies,
+        cf_clearance=cf_clearance,
+    )
 
 
 def build_sso_cookie(sso_token: str) -> str:
-    """
-    Build SSO Cookie string.
-
-    Args:
-        sso_token: str, the SSO token.
-
-    Returns:
-        str: The SSO Cookie string.
-    """
-    sso_token = sso_token[4:] if sso_token.startswith("sso=") else sso_token
-    sso_token = _sanitize_header_value(
-        sso_token, field_name="sso_token", remove_all_spaces=True
-    )
-
-    cookie = f"sso={sso_token}; sso-rw={sso_token}"
-
-    # CF Cookies
-    cf_cookies = _sanitize_header_value(
-        get_config("proxy.cf_cookies") or "", field_name="proxy.cf_cookies"
-    )
-    cf_clearance = _sanitize_header_value(
-        _get_cf_clearance() or "",
-        field_name="proxy.cf_clearance",
-        remove_all_spaces=True,
-    )
-    cf_refresh_enabled = bool(get_config("proxy.enabled"))
-
-    return _merge_cf_cookie_string(
-        cookie,
-        cf_cookies=cf_cookies,
-        cf_clearance=cf_clearance,
-        cf_refresh_enabled=cf_refresh_enabled,
-    )
+    """Build SSO Cookie string."""
+    return _build_sso_cookie_from_bundle(sso_token, _get_cf_credentials())
 
 
 async def build_sso_cookie_async(sso_token: str) -> str:
-    """
-    Build SSO Cookie string with auto-fetched CF Clearance.
-
-    Args:
-        sso_token: str, the SSO token.
-
-    Returns:
-        str: The SSO Cookie string.
-    """
-    sso_token = sso_token[4:] if sso_token.startswith("sso=") else sso_token
-    sso_token = _sanitize_header_value(
-        sso_token, field_name="sso_token", remove_all_spaces=True
-    )
-
-    cookie = f"sso={sso_token}; sso-rw={sso_token}"
-    cf_cookies = _sanitize_header_value(
-        get_config("proxy.cf_cookies") or "", field_name="proxy.cf_cookies"
-    )
-    cf_clearance = _sanitize_header_value(
-        await _get_cf_clearance_auto() or "",
-        field_name="proxy.cf_clearance",
-        remove_all_spaces=True,
-    )
-    cf_refresh_enabled = bool(get_config("proxy.enabled"))
-
-    return _merge_cf_cookie_string(
-        cookie,
-        cf_cookies=cf_cookies,
-        cf_clearance=cf_clearance,
-        cf_refresh_enabled=cf_refresh_enabled,
-    )
+    """Build SSO Cookie string with resolved CF credentials."""
+    return _build_sso_cookie_from_bundle(sso_token, await _get_cf_credentials_async())
 
 
 def _extract_major_version(browser: Optional[str], user_agent: Optional[str]) -> Optional[str]:
@@ -331,8 +238,9 @@ def build_ws_headers(token: Optional[str] = None, origin: Optional[str] = None, 
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    bundle = _get_cf_credentials()
     user_agent = _sanitize_header_value(
-        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+        bundle.user_agent, field_name="proxy.user_agent"
     )
     safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
     headers = {
@@ -343,18 +251,17 @@ def build_ws_headers(token: Optional[str] = None, origin: Optional[str] = None, 
         "Pragma": "no-cache",
     }
 
-    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    client_hints = _build_client_hints(bundle.browser, user_agent)
     if client_hints:
         headers.update(client_hints)
 
     if token:
-        headers["Cookie"] = build_sso_cookie(token)
+        headers["Cookie"] = _build_sso_cookie_from_bundle(token, bundle)
 
     if extra:
         headers.update(extra)
 
     return headers
-
 
 def build_headers(cookie_token: str, content_type: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, str]:
     """
@@ -369,8 +276,9 @@ def build_headers(cookie_token: str, content_type: Optional[str] = None, origin:
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    bundle = _get_cf_credentials()
     user_agent = _sanitize_header_value(
-        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+        bundle.user_agent, field_name="proxy.user_agent"
     )
     safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
     safe_referer = _sanitize_header_value(
@@ -387,11 +295,11 @@ def build_headers(cookie_token: str, content_type: Optional[str] = None, origin:
         "User-Agent": user_agent,
     }
 
-    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    client_hints = _build_client_hints(bundle.browser, user_agent)
     if client_hints:
         headers.update(client_hints)
 
-    headers["Cookie"] = build_sso_cookie(cookie_token)
+    headers["Cookie"] = _build_sso_cookie_from_bundle(cookie_token, bundle)
 
     if content_type and content_type == "application/json":
         headers["Content-Type"] = "application/json"
@@ -426,7 +334,7 @@ def build_headers(cookie_token: str, content_type: Optional[str] = None, origin:
 
 async def build_headers_async(cookie_token: str, content_type: Optional[str] = None, origin: Optional[str] = None, referer: Optional[str] = None) -> Dict[str, str]:
     """
-    Build headers for reverse interfaces with auto-fetched CF Clearance.
+    Build headers for reverse interfaces with resolved CF credentials.
 
     Args:
         cookie_token: str, the SSO token.
@@ -437,8 +345,9 @@ async def build_headers_async(cookie_token: str, content_type: Optional[str] = N
     Returns:
         Dict[str, str]: The headers dictionary.
     """
+    bundle = await _get_cf_credentials_async()
     user_agent = _sanitize_header_value(
-        get_config("proxy.user_agent"), field_name="proxy.user_agent"
+        bundle.user_agent, field_name="proxy.user_agent"
     )
     safe_origin = _sanitize_header_value(origin or "https://grok.com", field_name="origin")
     safe_referer = _sanitize_header_value(
@@ -455,11 +364,11 @@ async def build_headers_async(cookie_token: str, content_type: Optional[str] = N
         "User-Agent": user_agent,
     }
 
-    client_hints = _build_client_hints(get_config("proxy.browser"), user_agent)
+    client_hints = _build_client_hints(bundle.browser, user_agent)
     if client_hints:
         headers.update(client_hints)
 
-    headers["Cookie"] = await build_sso_cookie_async(cookie_token)
+    headers["Cookie"] = _build_sso_cookie_from_bundle(cookie_token, bundle)
 
     if content_type and content_type == "application/json":
         headers["Content-Type"] = "application/json"

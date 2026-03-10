@@ -7,6 +7,7 @@ from typing import Callable, Awaitable, Dict, Any, Optional
 
 from app.core.logger import logger
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.exceptions import UpstreamException
 from app.services.reverse.accept_tos import AcceptTosReverse
 from app.services.reverse.nsfw_mgmt import NsfwMgmtReverse
@@ -42,7 +43,7 @@ class NSFWService:
         batch_size = get_config("nsfw.batch_size")
         async def _enable(token: str):
             try:
-                browser = get_config("proxy.browser")
+                browser = resolve_impersonate_browser()
                 async with ResettableSession(impersonate=browser) as session:
                     async def _record_fail(err: UpstreamException, reason: str):
                         status = None

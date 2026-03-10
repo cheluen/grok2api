@@ -12,6 +12,7 @@ from curl_cffi.requests.errors import RequestsError
 
 from app.core.logger import logger
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.exceptions import (
     AppException,
     ValidationException,
@@ -271,7 +272,7 @@ class GrokChatService:
             f"Chat request: model={model}, mode={mode}, stream={stream}, attachments={len(file_attachments or [])}"
         )
 
-        browser = get_config("proxy.browser")
+        browser = resolve_impersonate_browser()
         semaphore = _get_chat_semaphore()
         await semaphore.acquire()
         session = ResettableSession(impersonate=browser)

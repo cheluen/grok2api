@@ -14,6 +14,7 @@ import orjson
 from curl_cffi.requests.errors import RequestsError
 
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.core.exceptions import (
     AppException,
     ErrorType,
@@ -510,7 +511,7 @@ def _get_video_semaphore() -> asyncio.Semaphore:
 
 
 def _new_session() -> ResettableSession:
-    browser = get_config("proxy.browser")
+    browser = resolve_impersonate_browser()
     if browser:
         return ResettableSession(impersonate=browser)
     return ResettableSession()

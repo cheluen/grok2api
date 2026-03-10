@@ -7,6 +7,7 @@ from typing import Callable, Awaitable, Dict, Any, Optional, List
 
 from app.core.logger import logger
 from app.core.config import get_config
+from app.services.cf_credentials import resolve_impersonate_browser
 from app.services.reverse.rate_limits import RateLimitsReverse
 from app.services.reverse.utils.session import ResettableSession
 from app.core.batch import run_batch
@@ -42,7 +43,7 @@ class UsageService:
         """
         async with _get_usage_semaphore():
             try:
-                browser = get_config("proxy.browser")
+                browser = resolve_impersonate_browser()
                 if browser:
                     session_ctx = ResettableSession(impersonate=browser)
                 else:

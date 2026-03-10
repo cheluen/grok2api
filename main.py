@@ -69,41 +69,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Platform: {platform.system()} {platform.release()}")
     logger.info(f"Python: {sys.version.split()[0]}")
 
-    # 4. 预热 CF Clearance（如果配置了自动获取服务）
-    try:
-        from app.services.cf_clearance import get_cf_clearance_service
-        service = get_cf_clearance_service()
-
-        service_url = service._get_service_url()
-        api_key = service._get_api_key()
-        proxy = service._get_proxy()
-        browser = service._get_browser()
-
-        logger.info(f"CF Clearance service config: url={service_url}, key={'***' if api_key else None}, proxy={'***' if proxy else None}, browser={browser}")
-
-        if service.is_enabled():
-            logger.info("Pre-warming CF Clearance...")
-            cf_clearance = await service.get_clearance()
-            if cf_clearance:
-                logger.info(f"CF Clearance pre-warmed successfully: {cf_clearance[:30]}...")
-            else:
-                logger.warning("CF Clearance pre-warm failed, will retry on demand")
-        else:
-            logger.info("CF Clearance auto-fetch service not configured, skipping pre-warm")
-    except Exception as e:
-        logger.warning(f"Failed to pre-warm CF Clearance: {e}", exc_info=True)
-
-    # 5. 启动 Token 刷新调度器
-    refresh_enabled = get_config("token.auto_refresh", True)
-    if refresh_enabled:
-        basic_interval = get_config("token.refresh_interval_hours", 8)
-        super_interval = get_config("token.super_refresh_interval_hours", 2)
-        interval = min(basic_interval, super_interval)
-        scheduler = get_scheduler(interval)
-        scheduler.start()
-
-    # 5. 启动 cf_clearance 自动刷新
-    #    环境变量 FLARESOLVERR_URL 会作为初始值写入配置（兼容旧部署方式）
+    # 4. 环境变量驱动的 cf_refresh 初始化（兼容旧部署方式）
     _flaresolverr_env = os.getenv("FLARESOLVERR_URL", "")
     if _flaresolverr_env and not get_config("proxy.flaresolverr_url"):
         await config.update({
@@ -115,6 +81,39 @@ async def lifespan(app: FastAPI):
             }
         })
 
+    # 5. 预热 CF 动态凭证（本地 legacy provider 优先，cf_refresh 仍由后台调度驱动）
+    try:
+        from app.services.cf_credentials import get_cf_credentials_facade
+
+        facade = get_cf_credentials_facade()
+        bundle = await facade.prewarm()
+        logger.info(
+            "CF credential providers: legacy={}, cf_refresh={}, source={}, browser={}",
+            facade.is_legacy_service_enabled(),
+            bundle.cf_refresh_enabled,
+            bundle.source,
+            bundle.browser or None,
+        )
+
+        if bundle.cf_clearance:
+            logger.info(f"CF credentials ready: {bundle.masked_clearance()}")
+        elif bundle.has_dynamic_provider:
+            logger.warning("CF dynamic provider is configured but no credentials are ready yet")
+        else:
+            logger.info("No dynamic CF provider configured, using static proxy settings only")
+    except Exception as e:
+        logger.warning(f"Failed to pre-warm CF credentials: {e}", exc_info=True)
+
+    # 6. 启动 Token 刷新调度器
+    refresh_enabled = get_config("token.auto_refresh", True)
+    if refresh_enabled:
+        basic_interval = get_config("token.refresh_interval_hours", 8)
+        super_interval = get_config("token.super_refresh_interval_hours", 2)
+        interval = min(basic_interval, super_interval)
+        scheduler = get_scheduler(interval)
+        scheduler.start()
+
+    # 7. 启动 cf_refresh 后台调度
     from app.services.cf_refresh import start as cf_refresh_start
     cf_refresh_start()
 
